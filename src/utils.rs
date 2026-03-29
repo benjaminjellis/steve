@@ -1,4 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use clap::builder::styling::{AnsiColor, Color, Style};
 
@@ -26,7 +29,7 @@ pub(crate) fn list_dirs(dir: &PathBuf) -> Result<Vec<PathBuf>, SteveError> {
         .collect::<Vec<_>>())
 }
 
-pub(crate) fn path_with_trailing_slash(path: PathBuf) -> String {
+pub(crate) fn path_with_trailing_slash(path: &Path) -> String {
     let mut s = path.to_string_lossy().to_string();
 
     if !s.ends_with('/') {

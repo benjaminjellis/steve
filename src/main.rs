@@ -12,15 +12,19 @@ use std::process;
 
 const DEFAULT_MAX_EPISODES: usize = 20;
 pub(crate) const AUDIO_EXTENSIONS: [&str; 4] = ["mp3", "m4a", "mp4", "aac"];
-pub(crate) const IPOD_CONTENT_DIR: &str = "/Users/ben/iPod Content";
+
+// TODO: support these four in config
+pub(crate) const IPOD_CONTENT_DIR: &str = "iPod Content";
 pub(crate) const PODCASTS_CONTENT_DIR: &str = "Podcasts";
+pub(crate) const MUSIC_CONTENT_DIR: &str = "Music";
 pub(crate) const IPOD_ROOT: &str = "/Volumes/IPOD";
+
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Parser)]
 #[command(styles= utils::get_styles())]
 #[command(version = VERSION)]
-#[command(name = "steve", about = "My iPod management tool", version)]
+#[command(name = "steve", about = "My iPod content management tool", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

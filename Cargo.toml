@@ -1,6 +1,6 @@
 [package]
 name = "steve"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -14,3 +14,4 @@ serde_json = "1.0"
 toml = "0.9"
 thiserror = "2.0.18"
 owo-colors = "4.3.0"
+homedir = "0.3.6"

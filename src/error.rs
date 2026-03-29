@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use homedir::GetHomeError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -13,4 +14,6 @@ pub enum SteveError {
     NoConnectedIpod { path: PathBuf },
     #[error("Unable to deserialize config as TOML: {source:?}")]
     TomlDeserialzie { source: toml::de::Error },
+    #[error("Unable to find homedir: {source:?}")]
+    NoHomeDir { source: GetHomeError },
 }
