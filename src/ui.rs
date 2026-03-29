@@ -4,6 +4,10 @@ pub(crate) fn green_std_out(message: String) {
     println!("{}", message.green());
 }
 
+pub(crate) fn blue_std_out(message: String) {
+    println!("{}", message.blue());
+}
+
 pub(crate) fn yellow_std_out(message: String) {
     println!("{}", message.yellow());
 }
