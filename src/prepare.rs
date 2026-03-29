@@ -4,6 +4,7 @@ use std::{
     fs::File,
     io,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use crate::ui;
@@ -45,16 +46,27 @@ fn parse_rss(
     feed: &RssFeed,
     default_max_episodes: &Option<usize>,
 ) -> Result<(String, Vec<Episode>, Option<usize>), SteveError> {
+    let url = feed.get_url();
     let response = client
-        .get(feed.get_url())
+        .get(url)
         .send()
-        .unwrap()
+        .map_err(|source| SteveError::ReqwestClientError {
+            source,
+            url: url.into(),
+        })?
         .error_for_status()
-        .unwrap();
+        .map_err(|error| SteveError::HttpErrorStatusCode {
+            status_code: error.status(),
+            url: url.to_string(),
+            context: "fetching a rss feed",
+        })?;
 
-    let bytes = response.bytes().unwrap();
+    let bytes = response
+        .bytes()
+        .map_err(|source| SteveError::HttpResponseBytes { source })?;
 
-    let channel = Channel::read_from(&bytes[..]).unwrap();
+    let channel =
+        Channel::read_from(&bytes[..]).map_err(|source| SteveError::RssChanelRead { source })?;
 
     let title = {
         let t = channel.title().trim();
@@ -108,6 +120,7 @@ fn prune_old_episodes(
     episodes: &[Episode],
     max_episodes: Option<usize>,
     dry_run: bool,
+    delta: PrepareDelta,
 ) -> Result<(), SteveError> {
     if max_episodes.is_none() {
         return Ok(());
@@ -126,7 +139,10 @@ fn prune_old_episodes(
     };
 
     for entry in entries {
-        let entry = entry.unwrap();
+        let Ok(entry) = entry else {
+            continue;
+        };
+
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -146,7 +162,12 @@ fn prune_old_episodes(
         }
 
         match fs::remove_file(&path) {
-            Ok(()) => println!("Deleted old episode: {name}"),
+            Ok(()) => {
+                println!("Deleted old episode: {name}");
+
+                let mut guard = delta.removed.lock().unwrap();
+                guard.push(path.to_string_lossy().to_string());
+            }
             Err(_) => println!("Failed deleting old episode: {}", path.display()),
         }
     }
@@ -219,31 +240,40 @@ struct Episode {
     url: String,
 }
 
+struct FeedData<'a> {
+    feed_title: String,
+    episodes_dir: &'a Path,
+    episodes: &'a [Episode],
+    max_episodes: Option<usize>,
+}
+
 fn download_episodes(
     client: &Client,
-    feed_title: &str,
-    episodes_dir: &Path,
-    episodes: &[Episode],
+    feed_data: FeedData,
     download_workers: usize,
     dry_run: bool,
-    max_episodes: Option<usize>,
+    delta: PrepareDelta,
 ) -> Result<(), SteveError> {
     if !dry_run {
-        fs::create_dir_all(episodes_dir).unwrap();
+        fs::create_dir_all(feed_data.episodes_dir)
+            .map_err(|source| SteveError::CreateDirs { source })?
     }
 
-    let podcast_dir = episodes_dir.join(sanitize_filename(feed_title));
+    let podcast_dir = feed_data
+        .episodes_dir
+        .join(sanitize_filename(&feed_data.feed_title));
     if !dry_run {
-        fs::create_dir_all(&podcast_dir).unwrap();
+        fs::create_dir_all(&podcast_dir).map_err(|source| SteveError::CreateDirs { source })?
     }
 
-    let jobs: Vec<DownloadJob> = episodes
+    let jobs: Vec<DownloadJob> = feed_data
+        .episodes
         .iter()
         .filter_map(|ep| {
             let filename = filename_from(&ep.title, &ep.url);
             let filepath = podcast_dir.join(&filename);
             if filepath.exists() {
-                println!("  Skipping (exists): {filename}");
+                ui::yellow_std_out(format!("  Skipping (exists): {filename}"));
                 None
             } else {
                 Some(DownloadJob {
@@ -257,37 +287,98 @@ fn download_episodes(
     if !jobs.is_empty() {
         if dry_run {
             for job in &jobs {
-                println!("Would download: {} -> {}", job.url, job.filepath.display());
+                ui::yellow_std_out(format!(
+                    "   Would download: {} -> {}",
+                    job.url,
+                    job.filepath.display()
+                ));
             }
         } else {
             let pool = ThreadPoolBuilder::new()
                 .num_threads(download_workers)
                 .build()
-                .unwrap();
+                .expect("Failed to create thread pool");
             let client = client.clone();
             pool.install(|| {
-                jobs.par_iter()
-                    .try_for_each(|job| download_file(&client, &job.url, &job.filepath))
+                jobs.par_iter().try_for_each(|job| {
+                    download_file(&client, &job.url, &job.filepath, delta.clone())
+                })
             })
             .unwrap()
         }
     }
 
-    prune_old_episodes(&podcast_dir, episodes, max_episodes, dry_run)?;
+    prune_old_episodes(
+        &podcast_dir,
+        feed_data.episodes,
+        feed_data.max_episodes,
+        dry_run,
+        delta,
+    )?;
     Ok(())
 }
 
-fn download_file(client: &Client, url: &str, filepath: &Path) -> Result<(), SteveError> {
-    println!("Downloading: {url}");
+fn download_file(
+    client: &Client,
+    url: &str,
+    filepath: &Path,
+    delta: PrepareDelta,
+) -> Result<(), SteveError> {
+    let base_name = filepath.file_name();
+    ui::blue_std_out(format!("  Downloading: {base_name:?}"));
     let mut response = client.get(url).send().unwrap().error_for_status().unwrap();
 
     let mut out = File::create(filepath).unwrap();
     io::copy(&mut response, &mut out).unwrap();
-    println!("Saved to: {}", filepath.display());
+    ui::green_std_out(format!("        Saved to: {}", filepath.display()));
+    let mut guard = delta.downloaded.lock().unwrap();
+    guard.push(filepath.to_string_lossy().to_string());
     Ok(())
 }
 
+#[derive(Default, Clone)]
+struct PrepareDelta {
+    downloaded: Arc<Mutex<Vec<String>>>,
+    removed: Arc<Mutex<Vec<String>>>,
+}
+
+impl PrepareDelta {
+    fn print_summary(&self) {
+        let mut downloaded = {
+            let guard = self.downloaded.lock().unwrap();
+            guard.clone()
+        };
+        downloaded.sort();
+
+        let mut removed = {
+            let guard = self.removed.lock().unwrap();
+            guard.clone()
+        };
+        removed.sort();
+
+        ui::blue_std_out("Prepare summary".into());
+        ui::green_std_out(format!("  Downloaded ({}):", downloaded.len()));
+        if downloaded.is_empty() {
+            println!("    (none)");
+        } else {
+            for path in downloaded {
+                println!("    - {path}");
+            }
+        }
+
+        ui::yellow_std_out(format!("  Deleted ({}):", removed.len()));
+        if removed.is_empty() {
+            println!("    (none)");
+        } else {
+            for path in removed {
+                println!("    - {path}");
+            }
+        }
+    }
+}
+
 pub(crate) fn run_prepare(dry_run: bool) -> Result<(), SteveError> {
+    let delta = PrepareDelta::default();
     let config_path = config_path();
     let config = crate::config::read_config(&config_path)?;
     let worker_count = available_workers();
@@ -308,16 +399,16 @@ pub(crate) fn run_prepare(dry_run: bool) -> Result<(), SteveError> {
         let (feed_title, episodes, max_episodes) = parse_rss(&client, feed, &config.max_episodes)?;
 
         ui::green_std_out(format!("fetching episodes of {feed_title}"));
-        download_episodes(
-            &client,
-            &feed_title,
-            &episodes_dir,
-            &episodes,
-            worker_count,
-            dry_run,
+        let feed_data = FeedData {
+            feed_title,
+            episodes_dir: &episodes_dir,
+            episodes: &episodes,
             max_episodes,
-        )?;
+        };
+        download_episodes(&client, feed_data, worker_count, dry_run, delta.clone())?;
     }
+
+    delta.print_summary();
 
     Ok(())
 }
