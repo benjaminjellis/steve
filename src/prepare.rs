@@ -163,9 +163,9 @@ fn prune_old_episodes(
 
         match fs::remove_file(&path) {
             Ok(()) => {
-                println!("Deleted old episode: {name}");
+                println!("  Deleted old episode: {name}");
 
-                let mut guard = delta.removed.lock().unwrap();
+                let mut guard = delta.removed.lock().expect("removed mutex poisoned");
                 guard.push(path.to_string_lossy().to_string());
             }
             Err(_) => println!("Failed deleting old episode: {}", path.display()),
@@ -297,14 +297,13 @@ fn download_episodes(
             let pool = ThreadPoolBuilder::new()
                 .num_threads(download_workers)
                 .build()
-                .expect("Failed to create thread pool");
+                .map_err(|source| SteveError::ThreadPoolBuild { source })?;
             let client = client.clone();
             pool.install(|| {
                 jobs.par_iter().try_for_each(|job| {
                     download_file(&client, &job.url, &job.filepath, delta.clone())
                 })
-            })
-            .unwrap()
+            })?
         }
     }
 
@@ -326,12 +325,30 @@ fn download_file(
 ) -> Result<(), SteveError> {
     let base_name = filepath.file_name();
     ui::blue_std_out(format!("  Downloading: {base_name:?}"));
-    let mut response = client.get(url).send().unwrap().error_for_status().unwrap();
+    let mut response = client
+        .get(url)
+        .send()
+        .map_err(|source| SteveError::ReqwestClientError {
+            source,
+            url: url.into(),
+        })?
+        .error_for_status()
+        .map_err(|e| SteveError::HttpErrorStatusCode {
+            status_code: e.status(),
+            url: url.to_string(),
+            context: "downloading episode",
+        })?;
 
-    let mut out = File::create(filepath).unwrap();
-    io::copy(&mut response, &mut out).unwrap();
+    let mut out = File::create(filepath).map_err(|source| SteveError::IOError {
+        source,
+        context: format!("creating file {}", filepath.display()),
+    })?;
+    io::copy(&mut response, &mut out).map_err(|source| SteveError::IOError {
+        source,
+        context: format!("writing to {}", filepath.display()),
+    })?;
     ui::green_std_out(format!("        Saved to: {}", filepath.display()));
-    let mut guard = delta.downloaded.lock().unwrap();
+    let mut guard = delta.downloaded.lock().expect("downloaded mutex poisoned");
     guard.push(filepath.to_string_lossy().to_string());
     Ok(())
 }
@@ -345,13 +362,13 @@ struct PrepareDelta {
 impl PrepareDelta {
     fn print_summary(&self) {
         let mut downloaded = {
-            let guard = self.downloaded.lock().unwrap();
+            let guard = self.downloaded.lock().expect("downloaded mutex poisoned");
             guard.clone()
         };
         downloaded.sort();
 
         let mut removed = {
-            let guard = self.removed.lock().unwrap();
+            let guard = self.removed.lock().expect("removed mutex poisoned");
             guard.clone()
         };
         removed.sort();
@@ -391,7 +408,7 @@ pub(crate) fn run_prepare(dry_run: bool) -> Result<(), SteveError> {
     let client = Client::builder()
         .user_agent("steve-rust/0.1")
         .build()
-        .unwrap();
+        .map_err(|source| SteveError::HttpClientBuild { source })?;
 
     let episodes_dir = PathBuf::from(config.episodes_dir);
 

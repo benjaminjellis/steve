@@ -190,12 +190,12 @@ fn execute_plan<P: Plan>(plan: P, content_dir: PathBuf) -> Result<(), SteveError
             let ipod_podcast_dir = content_dir.join(podcast_name);
             let source = crate::utils::path_with_trailing_slash(to_update);
             let dest = crate::utils::path_with_trailing_slash(&ipod_podcast_dir);
-            // use rysnc to copy
+            // Prefer speed: compare by file size only (ignore timestamps/metadata).
             let status = Command::new("rsync")
                 .args([
                     "-rtv",
+                    "--size-only",
                     "--delete",
-                    "--modify-window=1",
                     "--exclude=._*",
                     "--exclude=.DS_Store",
                     "--progress",
