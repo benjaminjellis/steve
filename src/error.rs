@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use homedir::GetHomeError;
+use rayon::ThreadPoolBuildError;
 use reqwest::StatusCode;
 use thiserror::Error;
 
@@ -31,6 +32,10 @@ pub enum SteveError {
     HttpResponseBytes { source: reqwest::Error },
     #[error("Failed to parse fetched rss feed as a channel: {source:?}")]
     RssChanelRead { source: rss::Error },
-    #[error("Failed to parse fetched rss feed as a channel: {source:?}")]
+    #[error("Failed to create directories: {source:?}")]
     CreateDirs { source: std::io::Error },
+    #[error("Failed to build HTTP client: {source:?}")]
+    HttpClientBuild { source: reqwest::Error },
+    #[error("Failed to build download thread pool: {source}")]
+    ThreadPoolBuild { source: ThreadPoolBuildError },
 }
