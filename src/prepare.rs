@@ -414,6 +414,7 @@ pub(crate) fn run_prepare(dry_run: bool) -> Result<(), SteveError> {
 
     for feed in &config.rss_urls {
         let (feed_title, episodes, max_episodes) = parse_rss(&client, feed, &config.max_episodes)?;
+        dbg!(&feed_title);
 
         ui::green_std_out(format!("fetching episodes of {feed_title}"));
         let feed_data = FeedData {
