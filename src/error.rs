@@ -12,6 +12,11 @@ pub enum SteveError {
         source: std::io::Error,
         context: String,
     },
+    #[error("Encountered error when running command: {source}, {context}")]
+    Command {
+        source: std::io::Error,
+        context: &'static str,
+    },
     #[error("Unable to find a connected iPod at path: {path:?}")]
     NoConnectedIpod { path: PathBuf },
     #[error("Unable to deserialize config as TOML: {source:?}")]

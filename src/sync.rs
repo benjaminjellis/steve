@@ -25,7 +25,7 @@ impl PodcastSyncPlan {
         ui::yellow_std_out("Removing the following...".into());
         self.podcasts_to_remove
             .iter()
-            .for_each(|to_remove| println!("{to_remove:?}"))
+            .for_each(|to_remove| println!("{}", to_remove.display()))
     }
 }
 
@@ -55,7 +55,7 @@ impl MusicSyncPlan {
         ui::yellow_std_out("Removing the following...".into());
         self.music_to_remove
             .iter()
-            .for_each(|to_remove| println!("{to_remove:?}"))
+            .for_each(|to_remove| println!("{}", to_remove.display()))
     }
 }
 
@@ -81,6 +81,11 @@ fn sync_music(
     let music_dir = local_content_dir.join(MUSIC_CONTENT_DIR);
 
     let ipod_music_dir = ipod_content_dir.join(MUSIC_CONTENT_DIR);
+    ui::blue_std_out(format!(
+        "Syncing music from {} to {}",
+        music_dir.display(),
+        ipod_music_dir.display()
+    ));
 
     let artist_dirs = crate::utils::list_dirs(&music_dir)?;
     let artists_on_ipod = crate::utils::list_dirs(&ipod_music_dir)?;
@@ -107,9 +112,7 @@ fn sync_music(
 
     plan.explain_plan();
 
-    if !dry_run {
-        execute_plan(plan, ipod_music_dir)?;
-    }
+    execute_plan(plan, ipod_music_dir, dry_run)?;
 
     Ok(())
 }
@@ -122,6 +125,11 @@ fn sync_podcasts(
     let podcasts_dir = local_content_dir.join(PODCASTS_CONTENT_DIR);
 
     let ipod_podcasts_dir = ipod_content_dir.join(PODCASTS_CONTENT_DIR);
+    ui::blue_std_out(format!(
+        "Syncing podcasts from {} to {}",
+        podcasts_dir.display(),
+        ipod_podcasts_dir.display()
+    ));
     let podcasts_file_paths = crate::utils::list_dirs(&podcasts_dir)?;
     let podcasts_on_ipod_paths = crate::utils::list_dirs(&ipod_podcasts_dir)?;
 
@@ -134,9 +142,7 @@ fn sync_podcasts(
         podcasts_to_remove: vec![],
         podcasts_to_update: vec![],
         // TODO: add skip to config
-        podcasts_to_skip: vec![PathBuf::from(
-            "/Users/ben/iPod Content/Podcasts/Podcast About List Premium",
-        )],
+        podcasts_to_skip: vec![],
     };
 
     for file_path in podcasts_on_ipod_paths {
@@ -151,9 +157,7 @@ fn sync_podcasts(
 
     plan.explain_plan();
 
-    if !dry_run {
-        execute_plan(plan, ipod_podcasts_dir)?;
-    }
+    execute_plan(plan, ipod_podcasts_dir, dry_run)?;
     Ok(())
 }
 
@@ -177,35 +181,45 @@ pub(crate) fn run_sync(dry_run: bool) -> Result<(), SteveError> {
     Ok(())
 }
 
-fn execute_plan<P: Plan>(plan: P, content_dir: PathBuf) -> Result<(), SteveError> {
+fn execute_plan<P: Plan>(plan: P, content_dir: PathBuf, dry_run: bool) -> Result<(), SteveError> {
     for to_remove in plan.to_remove() {
-        println!("Removing {to_remove:?}");
-        std::fs::remove_dir_all(to_remove).unwrap();
+        if dry_run {
+            println!("Would remove {}", to_remove.display());
+        } else {
+            println!("Removing {}", to_remove.display());
+            std::fs::remove_dir_all(to_remove).unwrap();
+        }
     }
 
     for to_update in plan.to_update() {
-        if let Some(podcast_name) = to_update.file_name()
+        if let Some(entry_name) = to_update.file_name()
             && !plan.to_skip().contains(to_update)
         {
-            let ipod_podcast_dir = content_dir.join(podcast_name);
+            let destination_dir = content_dir.join(entry_name);
             let source = crate::utils::path_with_trailing_slash(to_update);
-            let dest = crate::utils::path_with_trailing_slash(&ipod_podcast_dir);
-            // Prefer speed: compare by file size only (ignore timestamps/metadata).
-            let status = Command::new("rsync")
-                .args([
-                    "-rtv",
-                    "--size-only",
-                    "--delete",
-                    "--exclude=._*",
-                    "--exclude=.DS_Store",
-                    "--progress",
-                    source.as_str(),
-                    dest.as_str(),
-                ])
-                .status()
-                .unwrap();
-            if !status.success() {
-                eprintln!("rsync failed with: {}", status);
+            let dest = crate::utils::path_with_trailing_slash(&destination_dir);
+
+            if dry_run {
+                println!("Would run rsync from {source} to {dest}");
+            } else {
+                println!("Running rsync from {source} to {dest}");
+                // Prefer speed: compare by file size only (ignore timestamps/metadata).
+                let status = Command::new("rsync")
+                    .args([
+                        "-rtv",
+                        "--size-only",
+                        "--delete",
+                        "--exclude=._*",
+                        "--exclude=.DS_Store",
+                        "--progress",
+                        source.as_str(),
+                        dest.as_str(),
+                    ])
+                    .status()
+                    .unwrap();
+                if !status.success() {
+                    eprintln!("rsync failed with: {}", status);
+                }
             }
         }
     }

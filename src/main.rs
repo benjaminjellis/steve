@@ -1,4 +1,5 @@
 pub(crate) mod config;
+mod eject;
 mod error;
 pub(crate) mod logging;
 mod prepare;
@@ -42,12 +43,14 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    Eject,
 }
 
 fn run(cli: Cli) -> Result<(), SteveError> {
     match cli.command {
         Commands::Prepare { dry_run } => prepare::run_prepare(dry_run),
         Commands::Sync { dry_run } => sync::run_sync(dry_run),
+        Commands::Eject => eject::eject(),
     }
 }
 
