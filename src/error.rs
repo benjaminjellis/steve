@@ -19,8 +19,12 @@ pub enum SteveError {
     },
     #[error("Unable to find a connected iPod at path: {path:?}")]
     NoConnectedIpod { path: PathBuf },
-    #[error("Unable to deserialize config as TOML: {source:?}")]
-    TomlDeserialzie { source: toml::de::Error },
+    #[error("Unable to parse config as EDN: {source}")]
+    EdnParse {
+        source: edn_format::ParserErrorWithContext,
+    },
+    #[error("Invalid EDN config: {message}")]
+    EdnConfig { message: String },
     #[error("Unable to find homedir: {source:?}")]
     NoHomeDir { source: GetHomeError },
     #[error("Encountered a reqwest client error: {source:?}")]

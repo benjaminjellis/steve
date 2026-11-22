@@ -30,14 +30,14 @@ fn env_nonblank(name: &str) -> Option<String> {
 
 fn config_path() -> PathBuf {
     if let Some(xdg) = env_nonblank("XDG_CONFIG_HOME") {
-        PathBuf::from(xdg).join("steve").join("config.toml")
+        PathBuf::from(xdg).join("steve").join("config.edn")
     } else if let Some(home) = env_nonblank("HOME") {
         PathBuf::from(home)
             .join(".config")
             .join("steve")
-            .join("config.toml")
+            .join("config.edn")
     } else {
-        PathBuf::from("config.toml")
+        PathBuf::from("config.edn")
     }
 }
 
@@ -68,37 +68,53 @@ fn parse_rss(
     let channel =
         Channel::read_from(&bytes[..]).map_err(|source| SteveError::RssChanelRead { source })?;
 
-    let title = {
-        let t = channel.title().trim();
-        if t.is_empty() {
-            "unknown-feed".to_string()
-        } else {
-            t.to_string()
-        }
+    let t = channel.title().trim();
+    let title = if t.is_empty() {
+        "unknown-feed".to_string()
+    } else {
+        t.to_string()
     };
 
+    let max_episodes = feed.max_episodes(default_max_episodes);
+    let episodes = episodes_from_channel(&channel, feed.number(), max_episodes);
+
+    Ok((title, episodes, max_episodes))
+}
+
+fn episodes_from_channel(
+    channel: &Channel,
+    number: bool,
+    max_episodes: Option<usize>,
+) -> Vec<Episode> {
+    let feed_length = channel.items().len();
+    let width = feed_length.to_string().len();
     let mut episodes: Vec<Episode> = channel
         .items()
         .iter()
-        .filter_map(|item| {
+        .enumerate()
+        .filter_map(|(index, item)| {
             let enclosure = item.enclosure()?;
             let url = enclosure.url().trim();
             if url.is_empty() {
                 return None;
             }
+            let title = item.title().unwrap_or("untitled");
             Some(Episode {
-                title: item.title().unwrap_or("untitled").to_string(),
+                title: if number {
+                    format!("{:0width$} - {title}", feed_length - index)
+                } else {
+                    title.to_string()
+                },
                 url: url.to_string(),
             })
         })
         .collect();
-    let max_episodes = feed.max_episodes(default_max_episodes);
 
     if let Some(limit) = max_episodes {
         episodes.truncate(limit);
     }
 
-    Ok((title, episodes, max_episodes))
+    episodes
 }
 
 fn has_supported_audio_extension(name: &str) -> bool {
@@ -414,7 +430,6 @@ pub(crate) fn run_prepare(dry_run: bool) -> Result<(), SteveError> {
 
     for feed in &config.rss_urls {
         let (feed_title, episodes, max_episodes) = parse_rss(&client, feed, &config.max_episodes)?;
-        dbg!(&feed_title);
 
         ui::green_std_out(format!("fetching episodes of {feed_title}"));
         let feed_data = FeedData {
@@ -433,7 +448,49 @@ pub(crate) fn run_prepare(dry_run: bool) -> Result<(), SteveError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::prepare::{filename_from, sanitize_filename};
+    use super::{episode_filenames, episodes_from_channel, filename_from, sanitize_filename};
+    use rss::{Channel, Enclosure, Item};
+
+    #[test]
+    fn numbering_counts_from_oldest_in_full_feed_and_sorts_filenames() {
+        let mut channel = Channel::default();
+        channel.set_items(
+            (0..12)
+                .map(|index| {
+                    let mut item = Item::default();
+                    item.set_title(format!("Episode {index}"));
+                    if index != 1 {
+                        let mut enclosure = Enclosure::default();
+                        enclosure.set_url(format!("https://example.com/{index}.mp3"));
+                        item.set_enclosure(enclosure);
+                    }
+                    item
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        let episodes = episodes_from_channel(&channel, true, Some(2));
+        assert_eq!(episodes.len(), 2);
+        assert_eq!(episodes[0].title, "12 - Episode 0");
+        assert_eq!(episodes[1].title, "10 - Episode 2");
+        let episodes = episodes_from_channel(&channel, true, None);
+        let mut filenames = episode_filenames(&episodes).into_iter().collect::<Vec<_>>();
+        filenames.sort();
+        assert_eq!(
+            filenames,
+            episodes
+                .iter()
+                .rev()
+                .map(|ep| filename_from(&ep.title, &ep.url))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(filenames.first().unwrap(), "01 - Episode 11.mp3");
+        assert_eq!(filenames.last().unwrap(), "12 - Episode 0.mp3");
+
+        let episodes = episodes_from_channel(&channel, false, Some(2));
+        assert_eq!(episodes[0].title, "Episode 0");
+        assert_eq!(episodes[1].title, "Episode 2");
+    }
 
     #[test]
     fn sanitize_filename_test() {
