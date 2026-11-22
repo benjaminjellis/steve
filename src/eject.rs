@@ -1,21 +1,26 @@
 use std::process::Command;
 
-use crate::{IPOD_ROOT, error::SteveError, ui};
+use crate::error::SteveError;
 
 pub(crate) fn eject() -> Result<(), SteveError> {
-    let eject_command = Command::new("diskutil")
-        .args(["eject", IPOD_ROOT])
+    #[cfg(target_os = "linux")]
+    let (program, args) = (
+        "udisksctl",
+        ["unmount", "--block-device", "/dev/disk/by-label/IPOD"],
+    );
+    #[cfg(not(target_os = "linux"))]
+    let (program, args) = ("diskutil", ["eject", crate::IPOD_ROOT]);
+
+    let status = Command::new(program)
+        .args(args)
         .status()
         .map_err(|source| SteveError::Command {
             source,
             context: "ejecting ipod",
         })?;
 
-    if !eject_command.success() {
-        match eject_command.code() {
-            Some(code) => ui::red_std_err(format!("diskutil eject failed with exit code {code}")),
-            None => ui::red_std_err("diskutil eject terminated without an exit code".into()),
-        }
+    if !status.success() {
+        return Err(SteveError::EjectFailed { program, status });
     }
 
     Ok(())

@@ -18,6 +18,7 @@ pub(crate) const AUDIO_EXTENSIONS: [&str; 4] = ["mp3", "m4a", "mp4", "aac"];
 pub(crate) const IPOD_CONTENT_DIR: &str = "iPod Content";
 pub(crate) const PODCASTS_CONTENT_DIR: &str = "Podcasts";
 pub(crate) const MUSIC_CONTENT_DIR: &str = "Music";
+#[cfg(not(target_os = "linux"))]
 pub(crate) const IPOD_ROOT: &str = "/Volumes/IPOD";
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");

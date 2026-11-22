@@ -5,7 +5,38 @@ use std::{
     process::Command,
 };
 
-use crate::{IPOD_CONTENT_DIR, IPOD_ROOT, PODCASTS_CONTENT_DIR, error::SteveError};
+use crate::{IPOD_CONTENT_DIR, PODCASTS_CONTENT_DIR, error::SteveError};
+
+#[cfg(target_os = "linux")]
+fn mounted_ipod() -> Result<PathBuf, SteveError> {
+    let output = Command::new("findmnt")
+        .args([
+            "--noheadings",
+            "--list",
+            "--output",
+            "TARGET",
+            "--source",
+            "LABEL=IPOD",
+        ])
+        .output()
+        .map_err(|source| SteveError::Command {
+            source,
+            context: "looking up the IPOD mount with findmnt",
+        })?;
+
+    let targets = String::from_utf8_lossy(&output.stdout);
+    let mut targets = targets.lines();
+    match (output.status.success(), targets.next(), targets.next()) {
+        (true, Some(target), None) if Path::new(target).is_absolute() => Ok(PathBuf::from(target)),
+        (true, Some(_), Some(_)) => Err(SteveError::MultipleIpodMounts),
+        _ => Err(SteveError::IpodVolumeNotMounted),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn mounted_ipod() -> Result<PathBuf, SteveError> {
+    Ok(PathBuf::from(crate::IPOD_ROOT))
+}
 
 trait Plan {
     fn to_remove(&self) -> &Vec<PathBuf>;
@@ -168,7 +199,7 @@ pub(crate) fn run_sync(dry_run: bool) -> Result<(), SteveError> {
     };
 
     let local_content_dir = home_dir.join(IPOD_CONTENT_DIR);
-    let ipod_content_dir = PathBuf::from(IPOD_ROOT);
+    let ipod_content_dir = mounted_ipod()?;
 
     if !ipod_content_dir.is_dir() {
         return Err(SteveError::NoConnectedIpod {

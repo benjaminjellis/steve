@@ -17,8 +17,19 @@ pub enum SteveError {
         source: std::io::Error,
         context: &'static str,
     },
+    #[error("{program} failed to eject the iPod ({status})")]
+    EjectFailed {
+        program: &'static str,
+        status: std::process::ExitStatus,
+    },
     #[error("Unable to find a connected iPod at path: {path:?}")]
     NoConnectedIpod { path: PathBuf },
+    #[cfg(target_os = "linux")]
+    #[error("Unable to find a mounted volume labeled IPOD. Connect and mount the iPod first.")]
+    IpodVolumeNotMounted,
+    #[cfg(target_os = "linux")]
+    #[error("Multiple mounts match the IPOD volume label")]
+    MultipleIpodMounts,
     #[error("Unable to parse config as EDN: {source}")]
     EdnParse {
         source: edn_format::ParserErrorWithContext,
